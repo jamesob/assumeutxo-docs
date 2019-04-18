@@ -1,0 +1,313 @@
+--npejdeiydstzb5t6
+Content-Type: text/plain; charset=us-ascii
+Content-Disposition: inline
+Content-Transfer-Encoding: quoted-printable
+
+Hi, James.  Some quick thoughts on the text are below.  Sorry that some
+of it is a bit rambly, I don't have time to clean it up now and I
+figured you'd want comments sooner than later.
+
+-Dave
+
+On Tue, Apr 16, 2019 at 10:27:10AM -0400, James O'Beirne wrote:
+> ```
+>=20
+>=20
+>                                                                         _|
+>    _|_|_|   _|_|_|   _|_|_| _|    _| _|_|_|  _|_|     _|_|   _|    _| _|_=
+|_|_| _|    _|   _|_|
+>  _|    _| _|_|     _|_|     _|    _| _|    _|    _| _|_|_|_| _|    _|   _=
+|       _|_|   _|    _|
+>  _|    _|     _|_|     _|_| _|    _| _|    _|    _| _|       _|    _|   _=
+|     _|    _| _|    _|
+>    _|_|_| _|_|_|   _|_|_|     _|_|_| _|    _|    _|   _|_|_|   _|_|_|    =
+ _|_| _|    _|   _|_|
+>=20
+> ```
+
+This is hard to read on both my console and on the gist.
+
+>=20
+> ## Abstract
+>=20
+> An implementation and deployment plan for `assumeutxo` is proposed, which=
+ uses serialized UTXO sets to substantially reduce the amount of time neede=
+d to bootstrap a usable Bitcoin node with insignificant changes in security.
+>=20
+> #### Design goals
+>=20
+> 1. Provide a workable alternative to the unsustainable initial block down=
+load process,
+> 1. provide a realistic avenue for non-hobbyist users to run a fully valid=
+ating node,
+
+I like the second point, but I think the first point might be
+controversial.  If IBD is truly unsustainable, then Bitcoin will become
+a trusted system someday because no new user will be able to verify the
+complete previous history; if instead, it's s/unsustainable/burdensome/,
+then it's clearer that assumeutxo is just a UX improvement.  I think
+this would also be just as clear if the first point is deleted and you
+lead with the current second point.
+
+> 1. UTXO snapshots (~3.2GB) can be created and loaded via RPC in lieu
+> of the normal IBD process.
+
+Wouldn't this be better as a start-up option?  Back before sipa
+optimized IBD downloading, a contributor to the project maintained a
+separate file/torrent containing all blocks.  This could be used by
+simply putting the file in the Bitcoin data directory (indeed, I just
+git greped the source code, and it looks like it'd still work).  For
+historic details, see:
+
+    https://bitcoin.org/bin/block-chain/README.txt
+    https://bitcointalk.org/index.php?topic=3D145386.0
+
+> 1. Snapshots will be generated, stored, and transmitted by bitcoind.
+> To mitigate DoS concerns and storage consumption, nodes will store
+> subsets of FEC-split chunks spanning three snapshots (one current, two
+> historical) at an expected ~1.2GB storage burden. Nodes bootstrapping
+> will, if assumeutxo is enabled, obtain these chunks from several
+> distinct peers, reassemble a snapshot, and load it. The hardcoded
+> assumeutxo value will change from a content hash to a Merkle root
+> committing to the set of chunks particular to a certain snapshot. We
+> may consider adding a rolling UTXO set hash for local node storage to
+> make accessing expected UTXO set hashes faster, and may augment the
+> assumeutxo commitment with its value.
+
+I think this list of improvements to the bare-bones proposal in the
+previous list item might benefit from being split into a sub-list, e.g.:
+
+    1. Snapshots will be generate, stored, and transmitted by bitcoind.
+    2. Nodes will store subsets of snapshots
+    3. ...
+
+The reason is that several of these things are completely independent
+and so can be implemented separately (e.g. storing snapshots vs
+merklized root vs rolling commitment).
+
+On the specific proposals, I feel that a rolling commitment that's
+dumped to debug.log (or a specific db) is required for the initial
+version of assumeutxo.  Otherwise, it'll require a considerable amount
+of work for most people to verify a UTXO commitment.  E.g., currently if
+you tell me that the UTXO set hash for block 555555 is 01234...cdef, I
+can only verify that by running:
+
+  hash=3D$( bitcoin-cli getblockhash )
+  bitcoin-cli invalidateblock $hash
+  bitcoin-cli gettxoutsetinfo
+  bitcoin-cli reconsiderblock $hash
+
+That would take hours even on my fast server and would make my node
+unusable in most practical ways until the operation finished.  That's
+not a deal-breaker for the proposal, as many devs have spare machines
+they can do this on, but I think we really want to have as many people
+as possible being able to check utxo hashes.  To that end, I think we
+need rolling commitments (e.g. as described by sipa) that are
+automatically printed to debug.log or stored in a db.  I also think
+sipa's proposal (e.g. the ECC idea) automatically takes care of allowing
+verification of partial downloads; e.g., for each UTXO entry you
+receive, you can ensure it's part of your UTXO commitment.  This is
+arguably better than torrent-style merkle trees that have to choose a
+tradeoff between how many leaf nodes to have and how much overhead to
+create by distributing those leaves.
+
+Keeping historical snapshots seems weird to me.  What's the motivation
+for that?  It seems to me that a version 0.25 node should just keep the
+snapshot for whatever is the highest commitment it has; if a 0.24 node
+tries to connect to it, 0.25 says "sorry, I can help you".  The 0.24
+node keeps trying different nodes until it finds a fellow 0.24 node that
+does have the snapshot.
+
+> 1. (Far down the road) a consensus commitment to the UTXO set hash at
+> a given height will be considered.=20
+
+Although I guess maybe you have to mention this, this is completely
+different than the trust model you otherwise discuss in this document.
+
+> Given its linear scaling characteristics, initial block download may,
+> decades or centuries from now, become infeasible to complete for users
+> without considerable hardware resources.=20
+
+That assumes hardware performance and bandwidth availability doesn't
+improve at least linearly.  (And, further, that we run out of techniques
+for improving performance in software.)  The problem *today* is that
+early linear growth can represent large percentage increases; e.g.,
+Bitcoin's current consensus rules could allow the chain to easily grow
+by 100GB a year.  When the chain is currently only ~200GB, that's 50%.
+But in 18 years, the chain would be 2TB and it'd be only 5% growth and
+only 5% additional burden for IBD users.  If hardware/bandwidth improves
+by more than 5% in that year, IBD actually becomes easier for users
+then.
+
+> ### How does snapshot loading work?
+>=20
+> When a snapshot is loaded, it is deserialized into a full chainstate data=
+ structure, which includes a representation of the block chain and UTXO set=
+ (both on disk and cached in memory). This lives alongside the original cha=
+instate that was extant before loading the snapshot. Before accepting a loa=
+ded snapshot, a headers chain must be retrieved from the peer network which=
+ includes the block hash of the last block encompassed by a snapshot (its "=
+base").
+
+Shouldn't this block header (or at least its hash) be hardcoded into the
+software besides the assumeutxo hash?  Otherwise the snapshot could
+really be for block 555555 but Mallory could give me a snapshot
+containing the honest utxo set by a dishonest block header (e.g. for
+block 555556), causing me to reject blocks that contained transactions
+spending from utxos created in 555556, putting me on my own consensus
+failure hard fork.
+
+Although I can't think of why this is important for the other metadata,
+it does seem like all of it should be committed to in some way that
+prevents third-party modification.
+
+> After the snapshot chainstate reaches network tip, the original
+> chainstate resumes the initial block download from before the snapshot
+> was loaded in the background. This "background validation" process
+> happens asynchronously from use of the active (snapshot) chainstate,
+> allowing the system to service, for example, wallet operations. The
+> purpose of this background validation is to retrieve all block files
+> and fully validate the chain up to the start of the snapshot.
+
+I understand that some people want this, but I think it's not very
+useful.  One of the really nice benefits of assumeutxo by itself is that
+eliminates the wasted bandwidth and CPU of people verifying history that
+they probably don't care about.  I think it'd be great to have an option
+to verify old history (e.g. just like current -reindex-chainstate), but
+it doesn't seem to me like it should be the default.
+
+> Currently, Bitcoin ships with hardcoded assumevalid values. These
+> values identify certain blocks
+
+This is confusingly worded since Bitcoin Core only contains a single
+assumevalid value per release.
+
+> The idea being that these blocks are buried under so much work that
+> validity can be assumed on the basis of blockhash alone.
+
+Noooooooooo that's not at all the idea.  What you're describing is trust
+in most-PoW, AKA miner trust; if that's how assumevalid worked, I'd quit
+Bitcoin and I think a lot of other people would too.
+
+With assumevalid, you assume that the people who peer review your
+software are capable of running a full node that verifies every block up
+to and including the assumedvalid block.  This is no more trust than
+assuming that the people who peer review your software know the
+programming language it's written in and understand the consensus rules;
+indeed, it's arguably less trust because *nobody* completely understands
+a complex language like C++ and *nobody* probably understands every
+possible nuance of the consensus rules---yet almost anyone technical can
+start a node with -noassumevalid, wait a few hours, and check that
+`bitcoin-cli getblock $assume_valid_hash` returns has a
+`"confirmations"` field that's not -1.
+
+> ### Okay, so there might be a theoretical equivalence, but are there any =
+*practical* security differences with assumeutxo (vs. assumevalid)?
+>=20
+> Yes, there is one practical security difference. Currently, if I wanted t=
+o trick someone into thinking I had coins that I don't on the honest networ=
+k, I'd have to
+>=20
+> - get them to start bitcoind with a bad `-assumevalid=3D` parameter,
+> - isolate their node from the honest network to prevent them from getting=
+ a valid headers chain, and
+> - build a proof-of-work-compatible chain that includes the existing [chec=
+kpoints](https://github.com/bitcoin/bitcoin/blob/91a25d1e711bfc0617027eee18=
+b9777ff368d6b9/src/chainparams.cpp#L146-L160).
+
+The first of those steps is not required, the second is oddly worded,
+and the third is really a DoS-prevention mechanism not a security
+mechanism.
+
+1. If Alice starts Bitcoin Core with the default assumevalid
+configuration and that node finds a most-PoW chain that doesn't contain
+the assumevalid hash, it'll use that chain and just verify all historic
+scripts.
+
+2. "prevent them from getting a valid headers chain" is confusing
+because Bitcoin Core will reject any headers that aren't valid by
+headers-only standards.  I think maybe you're trying to say, "prevent
+them from getting the headers chain for the best block chain (most-PoW
+valid block chain)".
+
+3. Checkpoints only exist today to prevent owners of modern ASICs from
+creating an inifinite number of long difficulty-1 headers chains and
+spamming them at newly-started clients, a DoS attack.  Although they do
+protect early chain history, current developers don't like that
+"feature" and would prefer to get rid of them.  They have proposals for
+that which require consensus changes, although I think they'd prefer to
+find a local-only solution.
+
+> ### It seems like this is an argument for including a commitment to the a=
+ssumeutxo value in a place where it could be enforced by consensus, say in =
+the block headers. Should we do that?
+
+Huh, what?  No matter where you put commitments, anyone who can modify
+your software can get you to accept a backdoored utxo set.
+
+> ### Should we even run a background validation sync? If we accept the ass=
+umeutxo security model, why even do the IBD? If IBD isn't scalable long ter=
+m, what's the point?
+>=20
+> If we introduce assumeutxo with snapshots but do not perform IBD in
+> the background, it's easy to imagine that almost anyone setting up a
+> node will do so with a UTXO snapshot (since it's much quicker than
+> conventional IBD), run using an assumed-valid chain, and will present
+> itself to the network as a pruned node. In the limit, that results in
+> an absence of nodes serving historical blocks to the network. This
+> certainly isn't what we want, so it seems prudent to keep the
+> background IBD on as a default.
+
+I don't understand this argument.  If you just want to serve historic
+blocks, you don't need to verify them.  You can put them in a torrent
+(as has been done before).  Or you can simply download them, verify
+they're part of the best headers chain, and share them without
+verification.
+
+> Assumeutxo is a performance optimization. If we removed the IBD
+> process in lieu of it, that would be a change in Bitcoin's security
+> model.
+
+That new security model is implemented from the time you finish
+assumeutxo+short-ibd until the time you finish genesis+full-ibd.  If
+it's good enough for those hours/days/weeks/whatever, why isn't it good
+enough all the time?
+
+> This is inconvenient, but in the meantime we could modify
+> `gettxoutsetinfo` to accept a height and at least abstract away the
+> manual chain-mangling.
+
+I don't think that works, unless you specify the height of a future
+block and that triggers gettxoutsetinfo to run on that block.
+
+The problem is that spend UTXO entries are removed from the UTXO db after=
+=20
+each block, so there's the current db doesn't contain all of the data of
+previous versions and so a hash can't be generated without rolling back
+the chainstate (applyng the undo files) by invaliding subsequent blocks.
+
+***
+
+That's all I have.  Thanks for working on this!
+
+--npejdeiydstzb5t6
+Content-Type: application/pgp-signature; name="signature.asc"
+
+-----BEGIN PGP SIGNATURE-----
+
+iQIzBAEBCAAdFiEEgxUkqkMp0LnoXjCr2dtBqWwiadMFAly2B8YACgkQ2dtBqWwi
+adNUfQ/+McPfp670uCoWzLvpqRGCasakL2ixabcobrQSmU4/TaKpN6clyYNeQ2cf
+vsxg2ejETyon18nNzKvdb0k6ZHBysJpLzYBpDfpDSZPM3/kvWzM9ZE6scpzZD72s
+HkfwMLWcViZpNYAHFEqaSCzcWTxVMiHMge98i75BZuFvC4A7shHLVVIr7Ou1QvOi
+O0AEQy2Md8sJRoETHceYhnZ6OpCgDo3tLZudTbMOFbeVpnfElRo9G9J4tbgGAY6b
+eH36vkNrFGryNyqX2/emvBsPZ41QodvGF45lO39bFhD1tS9Rc6f0cLxomhKByVQU
+Ej6XacaQG2yYorLz/y9bsVHdg4jzJPGrI+1BM6zLPMoAnxP8MoxoRuOCBuSdbABk
+o9x032fnXjs5VPJ1Y1q2lHWvdHYfPviES7ANkoF4jB16qf2rXqBGsLLc9H3jwetE
+pta6sjvA2XJ8qfTF1WaW4AHubii5WmkiU4JDnKMM6S9dQ+aJWuwf26cQgpdlXxkD
+crFGkpvWG4eL39QYlmfOfY8RRGYcP3ZOk/FFqTpjgpqIz0mQaZxzPWCm24kQs2ne
+tBeyM/sg0uqq82E+CUTGoRKGcXb/B0RnhF/rJdzxkLYLcIp/62UE9MtO9qmFwEYr
+l7gJXdEF4DQINBkIFMir+gn8TOK6L4z80N3PMbdCZ5Ecp2t8fIY=
+=y3BI
+-----END PGP SIGNATURE-----
+
+--npejdeiydstzb5t6--
