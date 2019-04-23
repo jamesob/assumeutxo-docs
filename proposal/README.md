@@ -13,15 +13,15 @@ An implementation and deployment plan for `assumeutxo` is proposed, which uses s
 
 This feature could be deployed in two, possibly three, phases:
 
-1. UTXO snapshots (~3.2GB) can be created and loaded via RPC in lieu of the normal IBD process. 
-    - They will be obtained through means outside of bitcoind. 
-    - A hardcoded `assumeutxo` hash will fix which snapshots are considered valid. 
-    - Asynchronous validation of the snapshot will be performed in the background after it is loaded. 
+1. UTXO snapshots (~3.2GB) can be created and loaded via RPC in lieu of the normal IBD process.
+    - They will be obtained through means outside of bitcoind.
+    - A hardcoded `assumeutxo` hash will fix which snapshots are considered valid.
+    - Asynchronous validation of the snapshot will be performed in the background after it is loaded.
 This phase includes most, if not all, of the changes needed to existing validation code. (see [the PR](https://github.com/bitcoin/bitcoin/pull/15606))
-1. Snapshots will be generated, stored, and transmitted by bitcoind. 
+1. Snapshots will be generated, stored, and transmitted by bitcoind.
     - To mitigate DoS concerns and storage consumption, nodes will store subsets of FEC-split chunks spanning three snapshots (one current, two historical) at an expected ~1.2GB storage burden.
-    - Nodes bootstrapping will, if assumeutxo is enabled, obtain these chunks from several distinct peers, reassemble a snapshot, and load it. 
-    - The hardcoded assumeutxo value will change from a content hash to a Merkle root committing to the set of chunks particular to a certain snapshot. 
+    - Nodes bootstrapping will, if assumeutxo is enabled, obtain these chunks from several distinct peers, reassemble a snapshot, and load it.
+    - The hardcoded assumeutxo value will change from a content hash to a Merkle root committing to the set of chunks particular to a certain snapshot.
     - We may consider adding a rolling UTXO set hash for local node storage to make accessing expected UTXO set hashes faster, and may augment the assumeutxo commitment with its value.
 1. (Far down the road) a consensus commitment to the UTXO set hash at a given height may be considered. The snapshot and background validation process may be reused as we migrate to a more compact representation of the UTXO set, e.g. [utreexo](https://www.youtube.com/watch?v=edRun-6ubCc), [UHS](https://lists.linuxfoundation.org/pipermail/bitcoin-dev/2018-May/015967.html), or [accumulators](https://eprint.iacr.org/2018/1188).
 
@@ -34,17 +34,17 @@ Right now you can help by reviewing this proposal and the draft code.
 - Github issue: https://github.com/bitcoin/bitcoin/issues/15605
 - Phase 1 draft implementation: https://github.com/bitcoin/bitcoin/pull/15606
 
-#### Already familiar? 
+#### Already familiar?
 
 If you've been following this discussion and already understand the basics of
 `assumeutxo`, you can probably skip down to the [*Security* section](#security).
 
 #### Acknowledgements
- 
+
 I'd like to thank the following people for helping with this proposal, though they should not be held accountable for any dumb mistakes I may have made in the preparation of this document and related code:
 
-Suhas Daftuar, Pieter Wuille, Greg Maxwell, Matt Corallo, Alex Morcos, Dave Harding, AJ Towns, Marco Falke, Russ Yanofsky, and Jim Posen.
- 
+Suhas Daftuar, Pieter Wuille, Greg Maxwell, Matt Corallo, Alex Morcos, Dave Harding, AJ Towns, Sjors Provoost, Marco Falke, Russ Yanofsky, and Jim Posen.
+
 
 ## Basics
 
@@ -71,7 +71,7 @@ Right now initial block download is a process that scales linearly with the size
 
 When a snapshot is loaded, it is deserialized into a full chainstate data structure, which includes a representation of the block chain (`chainActive`) and UTXO set (both on disk and cached in memory). This lives alongside the original chainstate that was extant before loading the snapshot. Before accepting a loaded snapshot, a headers chain must be retrieved from the peer network which includes the block hash of the last block encompassed by a snapshot (its "base").
 
-Once the snapshot is loaded, the snapshot chainstate performs initial block download from the snapshot state to the network's tip. The system then allows operation as though IBD has completed, and the assumed-valid snapshot chainstate is treated as `chainActive`/`pcoinsTip`/et al. 
+Once the snapshot is loaded, the snapshot chainstate performs initial block download from the snapshot state to the network's tip. The system then allows operation as though IBD has completed, and the assumed-valid snapshot chainstate is treated as `chainActive`/`pcoinsTip`/et al.
 
 After the snapshot chainstate reaches network tip, the original chainstate resumes the initial block download from before the snapshot was loaded in the background. This "background validation" process happens asynchronously from use of the active (snapshot) chainstate, allowing the system to service, for example, wallet operations. The purpose of this background validation is to retrieve all block files and fully validate the chain up to the start of the snapshot.
 
@@ -87,11 +87,11 @@ Once the background validation completes, we throw its state away as the snapsho
 If we're talking about the degree to which developers are trusted to identify what is and isn't valid in Bitcoin: no, there is no material difference between use of assumeutxo and the degree that Bitcoin "trusts developers" now.
 
 Currently, Bitcoin ships with hardcoded assumevalid values. These values identify certain blocks which, if seen in the headers chain, allow signature checking for any prior blocks to be skipped as a performance optimization.
- 
+
 > With assumevalid, you assume that the people who peer review your software are capable of running a full node that verifies every block up to and including the assumedvalid block.  This is no more trust than assuming that the people who peer review your software know the programming language it's written in and understand the consensus rules; indeed, it's arguably less trust because *nobody* completely understands a complex language like C++ and *nobody* probably understands every possible nuance of the consensus rules---yet almost anyone technical can start a node with -noassumevalid, wait a few hours, and check that `bitcoin-cli getblock $assume_valid_hash` returns has a `"confirmations"` field that's not -1.
-> 
+>
 > *Dave Harding*
-                                                                  
+
 Assumeutxo is a similar idea and would be specified in a more stringent way (in that it can't be specified via CLI). The hardcoded assumeutxo value would be proposed and reviewed in exactly the same way as assumevalid (via pull request), and would be proposed and merged with a sufficient lead time that would allow anyone interested to reproduce its value for themselves.
 
 ### But isn't a hash in the code that assumes validity of a chain basically like the developers deciding what the "right" chain is?
@@ -109,7 +109,7 @@ Yes, there is one practical security difference. Currently, if I wanted to trick
 - get them to start bitcoind with a bad `-assumevalid=` parameter,
 - isolate their node from the honest network to prevent them from seeing the
   most-PoW headers chain, and
-- build a PoW-compatible chain that includes the existing [checkpoints](https://github.com/bitcoin/bitcoin/blob/91a25d1e711bfc0617027eee18b9777ff368d6b9/src/chainparams.cpp#L146-L160).
+- build a PoW-valid chain that includes the existing [checkpoints](https://github.com/bitcoin/bitcoin/blob/91a25d1e711bfc0617027eee18b9777ff368d6b9/src/chainparams.cpp#L146-L160), and includes a block with an invalid coin assignment somewhere after the last checkpoint.
 
 This obviously involves a bit of effort since the attacker needs to generate a chain of blocks along with the requisite PoW.
 
@@ -158,7 +158,7 @@ Assumeutxo is a performance optimization. If we removed the IBD process in lieu 
 
 Right now, computing the hash of the UTXO set at a certain height can be done by using the `gettxoutsetinfo` RPC command (i.e. `GetUTXOStats()`). It takes a few minutes to compute, and if you want to do it for an arbitrary height, you need to call `invalidateblock` to rewind to that point and then `reconsiderblock` afterwards to fast-forward back. Obviously, this interrupts normal operation.
 
-This is inconvenient, but in the meantime we could modify `gettxoutsetinfo` to accept a height and at least abstract away the manual chain-mangling.
+This is inconvenient, but in the meantime we could modify `gettxoutsetinfo` to accept a height and at least abstract away the manual chain rewind and fast-forward via `invalidateblock`/`reconsiderblock`.
 
 Longer-term, it's conceivable that we could use a node-local [rolling UTXO set hash](https://lists.linuxfoundation.org/pipermail/bitcoin-dev/2017-May/014337.html) to make the hash availability immediate. However, a rolling UTXO set hash is incompatible with assumeutxo commitment schemes that involve chunking snapshots (discussed below) and so the resulting assumeutxo value might have to be a tuple consisting of `(rolling_set_hash, split_snapshot_chunks_merkle_root)`.
 
@@ -192,6 +192,10 @@ For reference, a UTXO snapshot at a recent tip is roughly 3.2GB. If we don't do 
 ### How will snapshots be available from peers for a new assumeutxo value that has just been released?
 
 Good question - I haven't quite figured this one out yet. Presumably, we could have the code automatically generate snapshots every 6 months or so. In order to generate snapshots during runtime without impairing normal operations like new block reception, we'll probably have to refactor state-to-disk flushing to be asynchronous.
+
+Sjors notes that we could generate snapshots periodically based on block height, which would be useful for more than transmission to peers:
+
+> At fixed block intervals, the snapshots will [immediately] be useful even if they're not referenced in a release yet. They can be used for local backups to recover from block & chainstate data corruption. Each node can store the hash in a simple text file. When calling -reindex(chainstate) it looks for that text file. For pruned nodes -reindex could even just go back to the snapshot instead of all the way to genesis.  Similarly this can be helpful when a node needs to undo pruning to rescan an old wallet.
 
 
 
@@ -237,3 +241,20 @@ Review the code [here](https://github.com/bitcoin/bitcoin/pull/15606). Parts of 
 ### How will this work with [accumulators](https://eprint.iacr.org/2018/1188), [UHS](https://lists.linuxfoundation.org/pipermail/bitcoin-dev/2018-May/015967.html), or [utreexo](https://www.youtube.com/watch?v=edRun-6ubCc) if those things come around?
 
 If some alternate, space-saving scheme for representing the UTXO set becomes viable, it'll dovetail with assumeutxo nicely. It's easy to imagine that the assumeutxo value could simply become a merkle root of the utreexo forest, or the hash of an accumulator value. UTXO snapshots would reduce to just a few kilobytes instead of multiple gigabytes. The background IBD/validation feature will still be quite useful as we'll still want to do full validation in the background.
+
+
+## Implementation questions
+
+### How should we allocate memory (`-dbcache`) between the assumed-valid and background validation coins views?
+
+From Sjors:
+
+> I think it should allocate most memory to catching up from snapshot to the tip. This could be more than 6 months away. Once caught up, flush and allocate most memory to syncing from genesis. If a node is restarted during the process, sync the headers, if it's more than 24 hours behind, give most resources to catching up to tip, otherwise give them to catching up to the snapshot.
+>
+> For the very first version at least we need to make sure memory usage for both UTXO sets doesn't exceed `-dbcache + -maxpool`.
+
+At the moment, the draft implementation does a [70/30 split](https://github.com/bitcoin/bitcoin/pull/15606/commits/83f13a754372579cd13a45a2052fd4e42ed24632#diff-c865a8939105e6350a50af02766291b7R1476) between background validation and snapshot.
+
+### Why allow loading a snapshot through RPC - shouldn't it just be a startup command?
+
+Loading the snapshot as a startup parameter would allow us to simplify various things (like management of chainstate data structures), but if we're eventually going to transmit snapshots over the P2P network, we'll need to have logic in place that allows loading snapshots after startup has completed. I think we should be sure to test this kind of operation before this feature sees default usage, and so `loadtxoutset` seems like the right approach during the RPC phase.
