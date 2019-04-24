@@ -54,7 +54,7 @@ It's a serialized version of the unspent transaction output (UTXO) set, as seen 
   - total number of coins contained in the snapshot,
   - the block header for the latest block encapsulated in a snapshot (its "base"),
 
-and a few other things. You can see the full data structure (in its current form) in the [assumeutxo pull request](https://github.com/bitcoin/bitcoin/pull/15606/commits/f3a5106f62cb519cdb013c0a1a2b9b5461d927fc).
+and a few other things. You can see the full data structure (in its current form) in the [assumeutxo pull request](https://github.com/jamesob/bitcoin/blob/utxo-dumpload-compressed/src/validation.h#L827-L881).
 
 ### What's `assumeutxo`?
 
@@ -63,7 +63,7 @@ It's a piece of data embedded in the source code that commits to the hash of a s
 
 ### Okay... what's the use of these things?
 
-We can use the two of them to drastically reduce the amount of time it takes to bootstrap a usable Bitcoin node under a security model that seems acceptable.
+We can use UTXO snapshots and the `assumeutxo` commitment to significantly reduce the amount of time it takes to bootstrap a usable Bitcoin node under a security model that seems acceptable.
 
 Right now initial block download is a process that scales linearly with the size of the chain's history. It takes anywhere from 4 hours to multiple days to complete this process for a new installation of bitcoind, based upon hardware and network bandwidth. This process discourages users from running full nodes, instead incentivizing users to turn to clients with a reduced security model.
 
