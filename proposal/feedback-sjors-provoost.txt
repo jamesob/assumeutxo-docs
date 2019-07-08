@@ -1,0 +1,28 @@
+Regarding memory usage:
+
+I think it should allocate most memory to catching up from snapshot to the tip. This could be more than 6 months away. Once caught up, flush and allocate most memory to syncing from genesis. If a node is restarted during the process, sync the headers, if it's more than 24 hours behind, give most resources to catching up to tip, otherwise give them to catching up to the snapshot.
+
+For the very first version at least we need to make sure memory usage for both UTXO sets doesn't exceed `-dbcache + -maxpool`.
+
+> Presumably, we could have the code automatically generate snapshots every 6 months or so.
+
+At fixed block intervals, the snapshots will immedidatley be useful even if they're not referenced in a release yet. They can be used for local backups to recover from block & chainstate data corruption. Each node can store the hash in a simple text file. When calling -reindex(chainstate) it looks for that text file. For pruned nodes -reindex could even just go back to the snapshot instead of all the way to genesis.  Similarly this can be helpful when a node needs to undo pruning to rescan an old wallet.
+
+This also has the advantage that people can anticipate what the next release will contain. The trade-off there is lack of freshness, because it's unlikely a release will be immediately after a scheduled snapshot. However we can also release a minor version at more regular intervals.
+
+Regular snapshots are also
+Once nodes have their maximum of 3 snapshots, they could randomly decide which one to toss out to make room for the 4th snapshot. That way old snapshots will remain at least somewhat available. Otherwise if for whatever reason Bitcoin Core stops releasing new versions for a few years, the feature would become unavailable for new users.
+
+In your explanatino of the security model, you could emphasize that _all_ new users verify the assumeutxo, because their nodes will stop - after some time - if it's incorrect. When describing the  attack with a hyptothetical -assumeutxo param, maybe point out that this attack also only works if you trick the user before their node finds out what happens.
+
+Regarding backups - or at least easier recovery from chainstate corruption, and unpruning - I think that use case is important enough to find a solution for the phishing risk.
+
+The backup / unprune feature could be abused, but if we use a file rather than a parameter, then at least the attacker has to convince the victim to download a file.
+
+We could use a binary format, so an attacker can't tell the user "open notepad and enter this magic number in a new file".
+
+We can check all entries in the backup file against the header chain and abort if any don't match.
+
+We could encrypt the backup using something derived from the main wallet seed, though not all nodes have wallets.
+
+We could encrypt using something machine specific, but this doesn't work if the user restores a backup on a new machine because the old one is broken.

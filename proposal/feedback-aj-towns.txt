@@ -1,0 +1,128 @@
+On Tue, Apr 16, 2019 at 10:27:10AM -0400, James O'Beirne wrote:
+> The gist is here: https://gist.github.com/jamesob/
+> 4698f209fd5fb2984bc46ea931fa3e09
+> Your feedback would be very appreciated!
+
+I like it; doing IBD in the background anyway seems good, and if there
+was an SPV mode implemented at some point, would be useful for that too.
+
+I think the development/deployment phases could be:
+
+ 0) create and import utxo snapshots and assumeutxo hash values
+
+ 1) IBD in background to independently validate imported utxo snapshot
+
+ 2) improve utxo hashing to be merkelised so partial downloads can be
+    validated independently [0]
+
+ 3) allow efficient storage of old utxo sets, so that I can "get" the
+    UTXO set for block S (snapshot) as well as for block T (tip,
+    a descendent of S). should support multiple "S". [1] if S can be
+    dynamic, could use that setup for IBD as well? [2]
+
+ 4) support manually setting a (recent) snapshot height S and populating
+    the historical UTXO set for it, by initially setting it to the same
+    UTXOs as tip T, then removing any UTXOs that are newer than S, then
+    going through the rev*.dat blocks to add any TXOs that were spent
+    between S and T. that shouldn't require much locking, maybe? as part of
+    this, maybe only report utxosetinfo info for snapshot utxo sets, so
+    it can run quickly? maybe cache utxostats for snapshots?
+
+ 5) choose a snapshot frequency F (maybe 13104 blocks / 3 months?), and
+    automatically set a snapshot S at block heights that are a multiple
+    of F, once you've had 1008 blocks (1 week) on top of S. automatically
+    expire snapshots once you've got 3 that are more recent.
+
+ 6) share snapshot data over p2p
+
+ 7) request snapshot data over p2p, if deliberately configured that way
+
+ 8) make all this the default
+
+It's not clear to me that there's much value in sharding utxo snapshots;
+if we're doing IBD anyway then we need plenty of archive nodes on the
+network for that to happen, and for archive nodes an additional few GB
+to store utxo snapshots seems fairly trivial?
+
+Details for (2) and (3):
+
+[0] So I think this would mean something like taking the current utxo
+    set of ~53M outputs, ~3.1GB on disk, break it up into sets, cutting
+    off each set at 1MB serialised size (since no outpoint can be bigger
+    than 1MB, or smaller than 36B, this gives less than 28k outpoints per
+    set). so that should be ~3200 sets. hash each set, and make a merkel
+    tree out of that (perhaps include the serialised size and number of
+    tx's in the subtree hashes), and you'd either just ask for the hashes
+    and counts of all the blocks to start with (about 120kB) which would
+    tell you exactly what to expect to receive for each block you request;
+    or alternatively the merkle proof for each set would be about 500B,
+    so an extra 0.05% of data (1.6MB extra total).
+
+[1] "Efficeint" means taking a snapshot of tip should be pretty quick,
+    ideally. Maybe for each coin, store:
+
+       uint32_t snapshots_present; // bitmap
+       int8_t max_snapshot;
+
+    and consider:
+
+       bool valid_in_tip() { return max_snapshot >= 0; }
+       bool valid_in_snapshot(int snapshot_id) {
+            return snapshot_id >= max_snapshot || ((snapshots_present>>snapshot_id)&1) == 1;
+       }
+
+    Then, when adding a coin to the tip, just set snapshots_present=0,
+    and max_snapshot to the number of snapshots you've done at the time.
+
+    When taking a snapshot of the tip, just increment your count of
+    snapshots done, without touching any coins.
+
+    When deleting a coin from the tip, set the bits in snapshots_present
+    between its max_snapshot and your snapshot count, and set max_snapshot
+    to -1. Really delete it if max_snapshot was snapshot count.
+
+    Deleting a coin from a snapshot means either setting max_snapshot++
+    if max_snapshot == snapshot_id, or clearing the snapshot bit. If
+    max_snapshot == -1 and snapshots_present == 0, actually delete
+    the coin.
+
+    Deleting a snapshot means deleting each coin from it.
+
+    Delete all snapshots by going through every coin, deleting it if
+    max_snapshot == -1, otherwise set max_snapshot = 0, and
+    snapshots_present = 0, and finally reset the snapshot count to 0.
+
+    Adding a coin not in the tip to a snapshot means setting its
+    snapshots_present bit, and leaving/setting max_snapshot == -1.
+
+    32 snapshots, once every 3 months, covers 8 years before wrapping and
+    requiring deleting all snapshots and starting over. If you treat them
+    as a queue and mostly expire the oldest snapshot, I think you could
+    do better than that (eg, a rolling snapshot every week covering a 7
+    month period) by also tracking min_snapshot and ensuring max_snapshot
+    < min_snapshot + 32? Not 100% sure.
+
+    For iteration, I'd guess a dual tree structure, one tree for coins in
+    tip, one tree for all coins. That would make iterating over snapshots
+    maybe a bit slow, since you'd be iterating over all coins in all
+    snapshots and the tip. Not sure if locking would work well enough
+    though... It'd be nice to be able to simultaneously manipulate the
+    tip while iterating over a snapshot, and not require iteration to
+    snapshot the tip.
+
+    Also 8B*53M outputs is another 400MB of overhead which is like 13%...
+
+[2] For IBD up to assumeutxo point: Start with two snapshots, 0 and 1,
+    as well as tip, all empty. Populate tip from semi-trusted utxo
+    snapshot. Start IBD from genesis. New IBD block, validate against
+    snapshot 0. Remove spent coins from 0. Add new UTXOs to snapshot 0
+    if they're not in tip, but snapshot 1 if they are in tip. If block
+    validation fails, report why, merge UTXOs in snapshot 1 to snapshot 0,
+    delete snapshots 1 and tip, and continue IBD without assumeutxo.
+
+    If you have a separate lookup tree for snapshot 0, that could be
+    more efficient than current IBD, 'cause you can skip a whole bunch
+    of UTXOs during lookup? May not be plausible.
+
+Cheers,
+aj
